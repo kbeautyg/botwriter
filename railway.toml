@@ -1,0 +1,9 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python -m post_bot"
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
+# Polling-бот, HTTP-endpoint нет → отключаем healthcheck
+healthcheckPath = ""
