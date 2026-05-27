@@ -153,6 +153,9 @@ class UserDirective(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     text: Mapped[str] = mapped_column(Text)
     polarity: Mapped[str] = mapped_column(String(10), default="do")  # do | dont
+    # Если genre_scope = None — директива глобальная.
+    # Иначе применяется только когда Planner выбрал именно этот жанр.
+    genre_scope: Mapped[str | None] = mapped_column(String(40), nullable=True)
     weight: Mapped[float] = mapped_column(default=1.0)
     is_active: Mapped[bool] = mapped_column(default=True)
     source_post_id: Mapped[int | None] = mapped_column(

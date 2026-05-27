@@ -32,8 +32,8 @@ from post_bot.db.repository import (
     append_text,
     append_voice,
     create_brief,
-    get_active_directives,
     get_brief,
+    list_all_directives,
     rate_post,
     set_brief_status,
 )
@@ -389,6 +389,7 @@ async def on_comment_text(message: Message, state: FSMContext) -> None:
                     session,
                     text=d.text,
                     polarity=d.polarity,
+                    genre_scope=d.genre_scope,
                     source_post_id=post_id,
                     raw_comment=comment,
                 )
@@ -399,7 +400,8 @@ async def on_comment_text(message: Message, state: FSMContext) -> None:
         rules_lines = []
         for d in extracted.directives:
             marker = "DO" if d.polarity == "do" else "DON'T"
-            rules_lines.append(f"• [{marker}] {d.text}")
+            scope = f" ({d.genre_scope})" if d.genre_scope else ""
+            rules_lines.append(f"• [{marker}{scope}] {d.text}")
         rules = "\n".join(rules_lines)
         await message.answer(f"{M.COMMENT_SAVED}\n\nВыделил правила:\n{rules}")
     else:
@@ -410,17 +412,33 @@ async def on_comment_text(message: Message, state: FSMContext) -> None:
 
 async def _send_directives(send) -> None:
     async with get_session() as s:
-        directives = await get_active_directives(s, limit=30)
+        directives = await list_all_directives(s, limit=50)
     if not directives:
         await send(
             "Директив пока нет. Они появляются когда ты пишешь 💬 Комментарий к посту.",
             reply_markup=back_to_menu_kb(),
         )
         return
-    lines = ["📋 Активные директивы (учитываются в каждой генерации):\n"]
+    # Группируем: сначала глобальные, потом по жанрам
+    globals_: list = []
+    by_genre: dict[str, list] = {}
     for d in directives:
-        marker = "DO" if d.polarity == "do" else "DON'T"
-        lines.append(f"• [{marker}] {d.text}")
+        if d.genre_scope:
+            by_genre.setdefault(d.genre_scope, []).append(d)
+        else:
+            globals_.append(d)
+
+    lines = ["📋 Активные директивы:\n"]
+    if globals_:
+        lines.append("🌐 Глобальные (на все посты):")
+        for d in globals_:
+            marker = "DO" if d.polarity == "do" else "DON'T"
+            lines.append(f"  • [{marker}] {d.text}")
+    for genre, items in by_genre.items():
+        lines.append(f"\n🎯 Для жанра «{genre}»:")
+        for d in items:
+            marker = "DO" if d.polarity == "do" else "DON'T"
+            lines.append(f"  • [{marker}] {d.text}")
     await send("\n".join(lines), reply_markup=back_to_menu_kb())
 
 

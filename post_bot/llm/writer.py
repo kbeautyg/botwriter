@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from data.genre_rules import format_for_writer
 from post_bot.config import get_settings
 from post_bot.db.models import GoodPhrase, StyleExample
 from post_bot.llm.client import chat
@@ -79,10 +80,18 @@ def _build_user_prompt(
     elif genre_hint:
         sections.append(f"\n═══ ПОДСКАЗКА ПО ЖАНРУ ═══\nАвтор намекнул на жанр: {genre_hint}")
 
+    # Жанровые правила — отдельным жирным блоком после плана
+    effective_genre = (plan.genre if plan else genre_hint) or ""
+    genre_block = format_for_writer(effective_genre)
+    if genre_block:
+        sections.append(f"\n{genre_block}")
+
     sections.append("\n═══ ЭТАЛОНЫ СТИЛЯ (так пишет Артём — подражай интонации, не копируй слова) ═══")
     sections.append(_format_examples(examples))
 
-    sections.append("\n═══ ХАРАКТЕРНАЯ ЛЕКСИКА АВТОРА (можешь использовать, не обязан) ═══")
+    sections.append(
+        "\n═══ ХАРАКТЕРНАЯ ЛЕКСИКА АВТОРА (обязательно используй минимум 2 из этих оборотов) ═══"
+    )
     sections.append(_format_good_phrases(good_phrases))
 
     if directives:
@@ -104,9 +113,14 @@ def _build_user_prompt(
 
     sections.append(
         "\n═══ ЗАДАЧА ═══\n"
-        "Напиши черновик поста в голосе Артёма. Длина 250-550 слов. "
-        "Верни строгий JSON по формату, описанному в системной инструкции. "
-        "Никаких эмодзи-секций «Кто Мы?», никаких троек прилагательных, никаких «Подписывайтесь!»."
+        "Напиши черновик поста в голосе Артёма. Длина — строго из плана ±10%. "
+        "ОБЯЗАТЕЛЬНО:\n"
+        "  • Используй минимум 2 характерных оборота автора.\n"
+        "  • Включи минимум 1 колкую/самоироничную/жёсткую фразу.\n"
+        "  • Концовка жалит или хукает — никакой нейтральной констатации.\n"
+        "  • Соблюдай ВСЕ жанровые правила выше.\n"
+        "  • Используй все must_keep_phrases из плана.\n"
+        "Верни строгий JSON по формату из системной инструкции."
     )
     return "\n".join(sections)
 

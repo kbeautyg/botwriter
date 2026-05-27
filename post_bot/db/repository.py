@@ -219,12 +219,14 @@ async def add_user_directive(
     *,
     text: str,
     polarity: str = "do",
+    genre_scope: str | None = None,
     source_post_id: int | None = None,
     raw_comment: str | None = None,
 ) -> UserDirective:
     d = UserDirective(
         text=text.strip(),
         polarity=polarity if polarity in ("do", "dont") else "do",
+        genre_scope=genre_scope,
         source_post_id=source_post_id,
         raw_comment=raw_comment,
     )
@@ -234,12 +236,37 @@ async def add_user_directive(
 
 
 async def get_active_directives(
-    session: AsyncSession, limit: int = 20
+    session: AsyncSession,
+    *,
+    genre: str | None = None,
+    limit: int = 20,
 ) -> list[UserDirective]:
+    """Возвращает активные директивы.
+
+    Если genre задан — возвращает глобальные (genre_scope=None) + директивы этого жанра.
+    Если genre=None — возвращает только глобальные.
+    """
+    from sqlalchemy import or_
+    stmt = select(UserDirective).where(UserDirective.is_active.is_(True))
+    if genre:
+        stmt = stmt.where(
+            or_(UserDirective.genre_scope.is_(None), UserDirective.genre_scope == genre)
+        )
+    else:
+        stmt = stmt.where(UserDirective.genre_scope.is_(None))
+    stmt = stmt.order_by(
+        UserDirective.weight.desc(), UserDirective.created_at.desc()
+    ).limit(limit)
+    res = await session.execute(stmt)
+    return list(res.scalars().all())
+
+
+async def list_all_directives(session: AsyncSession, limit: int = 50) -> list[UserDirective]:
+    """Все активные директивы независимо от scope — для UI «📋 Мои правила»."""
     stmt = (
         select(UserDirective)
         .where(UserDirective.is_active.is_(True))
-        .order_by(UserDirective.weight.desc(), UserDirective.created_at.desc())
+        .order_by(UserDirective.created_at.desc())
         .limit(limit)
     )
     res = await session.execute(stmt)

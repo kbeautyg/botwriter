@@ -30,6 +30,7 @@ def _get_engine():
 _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("briefs", "target_length_words", "INTEGER"),
     ("briefs", "plan_json", "JSON"),
+    ("user_directives", "genre_scope", "VARCHAR(40)"),
 ]
 
 

@@ -59,8 +59,11 @@ async def generate_post(brief_id: int) -> PipelineResult:
             raise ValueError(f"Brief {brief_id} is empty")
 
         target_length = brief.target_length_words
-        active_dirs = await get_active_directives(session, limit=20)
-        directives_list: list[tuple[str, str]] = [(d.text, d.polarity) for d in active_dirs]
+        # Для Planner — только глобальные директивы (жанр ещё не известен)
+        global_dirs = await get_active_directives(session, genre=None, limit=20)
+        global_directives_list: list[tuple[str, str]] = [
+            (d.text, d.polarity) for d in global_dirs
+        ]
         # 1) Planner: что писать и как
         await set_brief_status(session, brief, "planning")
 
@@ -68,7 +71,7 @@ async def generate_post(brief_id: int) -> PipelineResult:
     plan = await plan_post(
         brief_text,
         target_length_words=target_length,
-        directives=directives_list,
+        directives=global_directives_list,
     )
     # Если автор задал длину явно — она перебивает то, что предложил Planner.
     if target_length:
@@ -95,6 +98,9 @@ async def generate_post(brief_id: int) -> PipelineResult:
 
         examples = await pick_examples(session, genre=plan.genre or brief.genre_hint, limit=3)
         good_phrases = await get_good_phrases(session, limit=30)
+        # Для Writer — глобальные + директивы выбранного жанра
+        full_dirs = await get_active_directives(session, genre=plan.genre, limit=30)
+        directives_list: list[tuple[str, str]] = [(d.text, d.polarity) for d in full_dirs]
 
         history: list[tuple[WriterResult, CriticResult]] = []
         best_draft_db: Draft | None = None
@@ -128,7 +134,11 @@ async def generate_post(brief_id: int) -> PipelineResult:
                 tokens_out=writer_res.tokens_out,
             )
 
-            critic_res = await review(writer_res.draft, target_length_words=plan.length_words)
+            critic_res = await review(
+                writer_res.draft,
+                target_length_words=plan.length_words,
+                genre=plan.genre,
+            )
             await attach_critic_review(
                 session,
                 draft_db,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from data.genre_rules import format_for_planner
 from post_bot.config import get_settings
 from post_bot.llm.client import chat
 from post_bot.llm.prompts import PLANNER_SYSTEM
@@ -70,6 +71,8 @@ async def plan_post(
         "═══ МАТЕРИАЛ АВТОРА ═══",
         brief_text.strip(),
         "═══ /МАТЕРИАЛ ═══",
+        "",
+        format_for_planner(),
     ]
     if target_length_words:
         sections.append(
@@ -83,7 +86,12 @@ async def plan_post(
             f"{_format_directives(directives)}\n"
             "Учитывай их при выборе тона, структуры, концовки."
         )
-    sections.append("\nСобери план поста по формату из системной инструкции. Строгий JSON.")
+    sections.append(
+        "\nСобери план поста по формату из системной инструкции. Строгий JSON.\n"
+        "ВАЖНО: must_keep_phrases ОБЯЗАТЕЛЬНО должен содержать минимум 1-2 характерных "
+        "оборота автора + одну колкую/самоироничную фразу — даже если в материале их нет, "
+        "придумай подходящие в стиле автора."
+    )
     user_prompt = "\n".join(sections)
     logger.info(f"Planner: model={s.model_critic} (cheap), brief_chars={len(brief_text)}")
     # Используем cheap-модель (та же что у Critic'а) — это структурное решение, не творчество
