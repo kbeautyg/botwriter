@@ -1,10 +1,11 @@
 """Конфиг через pydantic-settings. Читает .env."""
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +19,12 @@ class Settings(BaseSettings):
 
     # Telegram
     bot_token: str = Field(..., description="BotFather token")
-    allowed_user_ids: list[int] = Field(default_factory=list)
+    # ВАЖНО: храним как строку, чтобы pydantic-settings не пытался JSON-декодировать.
+    # Парсим в свойстве allowed_user_ids. Поддерживаемые форматы:
+    #   "123"            -> [123]
+    #   "123,456,789"    -> [123, 456, 789]
+    #   "[1, 2, 3]"      -> [1, 2, 3]   (JSON, на случай если кто-то так задаст)
+    allowed_user_ids_raw: str = Field("", alias="ALLOWED_USER_IDS")
 
     # OpenAI
     openai_api_key: str = Field(...)
@@ -39,12 +45,17 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    @field_validator("allowed_user_ids", mode="before")
-    @classmethod
-    def _parse_ids(cls, v):
-        if isinstance(v, str):
-            return [int(x.strip()) for x in v.split(",") if x.strip()]
-        return v
+    @property
+    def allowed_user_ids(self) -> list[int]:
+        raw = (self.allowed_user_ids_raw or "").strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return [int(x) for x in json.loads(raw)]
+            except (ValueError, json.JSONDecodeError):
+                return []
+        return [int(x.strip()) for x in raw.split(",") if x.strip().lstrip("-").isdigit()]
 
     @property
     def db_url(self) -> str:

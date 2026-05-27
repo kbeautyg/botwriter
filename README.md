@@ -143,11 +143,15 @@ pytest -k llm                   # регрессия Critic + smoke pipeline (н
    - Size: 1GB (для начала достаточно — SQLite + voice cache).
 3. Переменные окружения (Variables):
    ```
+   # обязательные
    BOT_TOKEN=<токен от BotFather>
    OPENAI_API_KEY=<sk-...>
    ALLOWED_USER_IDS=<csv user_id: твой, Артёма, Андрея>
    DB_PATH=/data/post_bot.sqlite
-   LOG_LEVEL=INFO
+
+   # опционально — прокси для OpenAI (если прямой API недоступен из РФ)
+   # пример: OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1
+   OPENAI_BASE_URL=
 
    # опционально — модели
    MODEL_WRITER=gpt-4o
@@ -159,7 +163,9 @@ pytest -k llm                   # регрессия Critic + smoke pipeline (н
    MAX_REWRITE_ITERATIONS=2
    MIN_ACCEPTABLE_SCORE=5
    AUTO_SAVE_AS_EXAMPLE_THRESHOLD=7
+   LOG_LEVEL=INFO
    ```
+   **Важно:** после добавления/изменения переменных — **Deploy → Redeploy**, иначе Railway не подхватит новые значения.
 4. Redeploy. В логах должно появиться `Bot @username ready. Polling…`.
 
 **Что в репозитории под Railway:**
