@@ -85,12 +85,17 @@ async def generate_post(brief_id: int) -> PipelineResult:
         # сохраним план в брифе
         brief.plan_json = {
             "genre": plan.genre,
+            "headline": plan.headline,
             "hook": plan.hook,
             "structure": plan.structure,
+            "opposition": plan.opposition,
+            "we_position": plan.we_position,
+            "reader_filter": plan.reader_filter,
             "key_points": plan.key_points,
             "must_keep_phrases": plan.must_keep_phrases,
             "tone": plan.tone,
             "close_type": plan.close_type,
+            "close_announcement": plan.close_announcement,
             "length_words": plan.length_words,
             "rationale": plan.rationale,
         }

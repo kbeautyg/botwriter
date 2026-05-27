@@ -81,13 +81,13 @@ async def review(
         "authenticity": _clamp(breakdown_raw.get("authenticity"), 0, 10),
         "originality": _clamp(breakdown_raw.get("originality"), 0, 10),
         "anti_ai": _clamp(breakdown_raw.get("anti_ai"), 0, 10),
-        "voice_markers": _clamp(breakdown_raw.get("voice_markers"), 0, 3),
+        "voice_markers": _clamp(breakdown_raw.get("voice_markers"), 0, 5),
     }
 
     # Если модель не вернула score — пересчитаем сами по формуле.
     raw_score = payload.get("score")
     if raw_score is None:
-        voice_norm = breakdown["voice_markers"] * 10 / 3
+        voice_norm = breakdown["voice_markers"] * 2  # 0-5 → 0-10
         avg = (
             breakdown["liveliness"]
             + breakdown["authenticity"]

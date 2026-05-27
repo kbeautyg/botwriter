@@ -17,12 +17,17 @@ from post_bot.utils.logger import logger
 @dataclass
 class Plan:
     genre: str = "unknown"
+    headline: str = ""           # звучный заголовок-провокация (отдельно от первой строки)
     hook: str = ""
     structure: str = ""
+    opposition: str = ""         # против кого/чего пост (инфоцыгане, темщики, ленивые)
+    we_position: str = ""        # позиция «мы» — кто такой автор/команда
+    reader_filter: str = ""      # фраза отсева читателя («если у вас X — закройте пост»)
     key_points: list[str] = field(default_factory=list)
     must_keep_phrases: list[str] = field(default_factory=list)
     tone: str = "прямой"
     close_type: str = "strong_statement"
+    close_announcement: str = "" # анонс следующего поста (если close_type=hook_next_post)
     length_words: int = 350
     rationale: str = ""
     tokens_in: int = 0
@@ -33,16 +38,28 @@ class Plan:
         """Форматирование плана для подкладки в Writer-промпт."""
         kp = "\n".join(f"  • {p}" for p in self.key_points) or "  (нет)"
         mk = "\n".join(f"  • {p}" for p in self.must_keep_phrases) or "  (нет)"
+        opp = self.opposition or "(не задано — Writer обязан выбрать сам, без противника пост стерильный)"
+        we = self.we_position or "(не задано — обозначь «мы» как команду с опытом)"
+        rf = self.reader_filter or "(не задан — придумай фразу-отсев в стиле Артёма)"
+        ann = self.close_announcement or "(не задан — придумай конкретный анонс)"
         return (
             f"ЖАНР: {self.genre}\n"
             f"ТОН: {self.tone}\n"
             f"ЦЕЛЕВАЯ ДЛИНА: {self.length_words} слов\n\n"
+            f"🏆 ЗАГОЛОВОК ПОСТА (отдельная строка над текстом, используй точно):\n"
+            f"  «{self.headline}»\n\n"
+            f"⚔️ ПРОТИВНИК (кому/чему противопоставлен пост — обязательно упомяни):\n"
+            f"  {opp}\n\n"
+            f"👥 ПОЗИЦИЯ «МЫ» (кто говорит — команда автора с опытом):\n"
+            f"  {we}\n\n"
+            f"🚫 ОТСЕВ ЧИТАТЕЛЯ (одна фраза «лучше закройте этот пост, если…»):\n"
+            f"  {rf}\n\n"
             f"ОТКРЫВАЮЩАЯ ФРАЗА-КРЮК (используй прямо или близко):\n  «{self.hook}»\n\n"
             f"СТРУКТУРА:\n  {self.structure}\n\n"
             f"КЛЮЧЕВЫЕ ТЕЗИСЫ (обязательно включи):\n{kp}\n\n"
-            f"ФРАЗЫ АВТОРА К СОХРАНЕНИЮ (используй именно так):\n{mk}\n\n"
+            f"ФРАЗЫ АВТОРА К СОХРАНЕНИЮ (используй ЕСЛИ ЛОЖАТСЯ ЕСТЕСТВЕННО, иначе пропусти):\n{mk}\n\n"
             f"ТИП КОНЦОВКИ: {self.close_type}\n"
-            f"  hook_next_post   — крючок на следующий пост\n"
+            f"  hook_next_post   — крючок на следующий пост (АНОНС: «{ann}»)\n"
             f"  direct_cta       — прямой призыв (ставь 🔥, включай уведомления)\n"
             f"  open_question    — открытый вопрос\n"
             f"  strong_statement — сильная финальная фраза без призыва"
@@ -122,12 +139,17 @@ async def plan_post(
 
     plan = Plan(
         genre=_str("genre", "unknown") or "unknown",
+        headline=_str("headline"),
         hook=_str("hook"),
         structure=_str("structure"),
+        opposition=_str("opposition"),
+        we_position=_str("we_position"),
+        reader_filter=_str("reader_filter"),
         key_points=_list("key_points"),
         must_keep_phrases=_list("must_keep_phrases"),
         tone=_str("tone", "прямой") or "прямой",
         close_type=_str("close_type", "strong_statement") or "strong_statement",
+        close_announcement=_str("close_announcement"),
         length_words=_int("length_words", 350),
         rationale=_str("rationale"),
         tokens_in=res.tokens_in,
@@ -136,6 +158,7 @@ async def plan_post(
     )
     logger.info(
         f"Planner: genre={plan.genre} tone={plan.tone} close={plan.close_type} "
+        f"opposition='{plan.opposition[:40]}' headline='{plan.headline[:40]}' "
         f"key_points={len(plan.key_points)} must_keep={len(plan.must_keep_phrases)}"
     )
     return plan
