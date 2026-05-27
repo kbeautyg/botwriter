@@ -30,10 +30,19 @@ def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-async def review(draft_text: str) -> CriticResult:
+async def review(draft_text: str, *, target_length_words: int | None = None) -> CriticResult:
     s = get_settings()
+    word_count = len(draft_text.split())
+    length_block = ""
+    if target_length_words:
+        length_block = (
+            f"\n═══ ЦЕЛЕВАЯ ДЛИНА ═══\n"
+            f"Автор просил ~{target_length_words} слов. В драфте сейчас примерно {word_count} слов.\n"
+            f"Если отклонение > ±20% — это нарушение, обязательно в must_fix.\n"
+        )
     user_prompt = (
-        "Оцени этот пост по rubric'у. Найди все ИИ-маркеры и запрещённые слова.\n\n"
+        "Оцени этот пост по rubric'у. Найди все ИИ-маркеры и запрещённые слова.\n"
+        f"{length_block}\n"
         "═══ ТЕКСТ ПОСТА ═══\n"
         f"{draft_text.strip()}\n"
         "═══ /ТЕКСТ ═══\n\n"

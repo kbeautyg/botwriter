@@ -10,3 +10,10 @@ class BriefStates(StatesGroup):
     generating = State()         # pipeline работает
     awaiting_rating = State()    # ждём оценку и/или редактуру
     awaiting_comment = State()   # ждём текстовый комментарий к посту
+
+
+class ExampleStates(StatesGroup):
+    """Поток добавления стиль-примера руками."""
+    waiting_text = State()       # ждём текст поста
+    waiting_genre = State()      # ждём выбор жанра
+    waiting_score = State()      # ждём выбор оценки

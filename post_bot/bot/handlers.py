@@ -11,16 +11,23 @@ from sqlalchemy import select
 
 from post_bot.bot import messages as M
 from post_bot.bot.keyboards import (
+    GENRES_RU,
     after_rating_kb,
+    back_to_menu_kb,
     brief_collecting_kb,
+    genre_choice_kb,
     length_choice_kb,
+    main_menu_kb,
     rating_kb,
+    score_choice_kb,
 )
-from post_bot.bot.states import BriefStates
+from post_bot.bot.states import BriefStates, ExampleStates
 from post_bot.config import get_settings
 from post_bot.db.engine import get_session
-from post_bot.db.models import Post, UserDirective
+from post_bot.db.models import Post
 from post_bot.db.repository import (
+    add_good_phrase,
+    add_style_example,
     add_user_directive,
     append_text,
     append_voice,
@@ -32,24 +39,37 @@ from post_bot.db.repository import (
 )
 from post_bot.llm.feedback_extractor import extract_directives
 from post_bot.llm.stt import transcribe
+from post_bot.llm.stylist import extract_style
 from post_bot.pipeline.orchestrator import generate_post, save_post_as_example
 from post_bot.utils.logger import logger
+
+_GENRE_LABELS = {code: label for code, label in GENRES_RU}
 
 router = Router(name="post-bot")
 
 
-# ----------------------------- /start -----------------------------
+# ----------------------------- /start и главное меню -----------------------------
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(M.START)
+    await message.answer(M.START, reply_markup=main_menu_kb())
+
+
+@router.callback_query(F.data == "menu:home")
+async def on_menu_home(cb: CallbackQuery, state: FSMContext) -> None:
+    """Возврат в главное меню из любого экрана."""
+    await state.clear()
+    await cb.answer()
+    if cb.message:
+        await cb.message.answer(M.MENU_HOME, reply_markup=main_menu_kb())
 
 
 # ----------------------------- /new -----------------------------
 
 @router.message(Command("new"))
 @router.callback_query(F.data == "brief:new")
+@router.callback_query(F.data == "menu:new")
 async def cmd_new(event: Message | CallbackQuery, state: FSMContext) -> None:
     user_id = event.from_user.id  # type: ignore[union-attr]
     msg = event if isinstance(event, Message) else event.message
@@ -201,8 +221,7 @@ async def cmd_done(event: Message | CallbackQuery, state: FSMContext, bot: Bot) 
 
 # ----------------------------- /history -----------------------------
 
-@router.message(Command("history"))
-async def cmd_history(message: Message) -> None:
+async def _send_history(send) -> None:
     async with get_session() as s:
         stmt = (
             select(Post)
@@ -214,7 +233,19 @@ async def cmd_history(message: Message) -> None:
         (p.id, p.genre or "—", p.user_rating, (p.text[:80] + ("…" if len(p.text) > 80 else "")))
         for p in rows
     ])
-    await message.answer(out)
+    await send(out, reply_markup=back_to_menu_kb())
+
+
+@router.message(Command("history"))
+async def cmd_history(message: Message) -> None:
+    await _send_history(message.answer)
+
+
+@router.callback_query(F.data == "menu:history")
+async def on_menu_history(cb: CallbackQuery) -> None:
+    await cb.answer()
+    if cb.message:
+        await _send_history(cb.message.answer)
 
 
 # ----------------------------- сбор брифа -----------------------------
@@ -377,20 +408,144 @@ async def on_comment_text(message: Message, state: FSMContext) -> None:
 
 # ----------------------------- /directives -----------------------------
 
-@router.message(Command("directives"))
-async def cmd_directives(message: Message) -> None:
+async def _send_directives(send) -> None:
     async with get_session() as s:
         directives = await get_active_directives(s, limit=30)
     if not directives:
-        await message.answer(
-            "Директив пока нет. Они появляются когда ты пишешь 💬 Комментарий к посту."
+        await send(
+            "Директив пока нет. Они появляются когда ты пишешь 💬 Комментарий к посту.",
+            reply_markup=back_to_menu_kb(),
         )
         return
     lines = ["📋 Активные директивы (учитываются в каждой генерации):\n"]
     for d in directives:
         marker = "DO" if d.polarity == "do" else "DON'T"
         lines.append(f"• [{marker}] {d.text}")
-    await message.answer("\n".join(lines))
+    await send("\n".join(lines), reply_markup=back_to_menu_kb())
+
+
+@router.message(Command("directives"))
+async def cmd_directives(message: Message) -> None:
+    await _send_directives(message.answer)
+
+
+@router.callback_query(F.data == "menu:directives")
+async def on_menu_directives(cb: CallbackQuery) -> None:
+    await cb.answer()
+    if cb.message:
+        await _send_directives(cb.message.answer)
+
+
+# ----------------------------- добавление примера -----------------------------
+
+@router.callback_query(F.data == "menu:add_example")
+async def on_menu_add_example(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(ExampleStates.waiting_text)
+    await cb.answer()
+    if cb.message:
+        await cb.message.answer(M.EXAMPLE_PROMPT_TEXT, reply_markup=back_to_menu_kb())
+
+
+@router.message(ExampleStates.waiting_text, F.text)
+async def on_example_text(message: Message, state: FSMContext) -> None:
+    if message.text and message.text.startswith("/"):
+        return
+    text = (message.text or "").strip()
+    if len(text) < 150:
+        await message.answer(M.EXAMPLE_TOO_SHORT, reply_markup=back_to_menu_kb())
+        return
+    await state.update_data(example_text=text)
+    await state.set_state(ExampleStates.waiting_genre)
+    await message.answer(M.EXAMPLE_PROMPT_GENRE, reply_markup=genre_choice_kb())
+
+
+@router.callback_query(F.data.startswith("exgenre:"))
+async def on_example_genre(cb: CallbackQuery, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current != ExampleStates.waiting_genre.state:
+        await cb.answer()
+        return
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2:
+        await cb.answer()
+        return
+    genre = parts[1]
+    await state.update_data(example_genre=genre)
+    await state.set_state(ExampleStates.waiting_score)
+    await cb.answer()
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(M.EXAMPLE_PROMPT_SCORE, reply_markup=score_choice_kb())
+
+
+@router.callback_query(F.data.startswith("exscore:"))
+async def on_example_score(cb: CallbackQuery, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current != ExampleStates.waiting_score.state:
+        await cb.answer()
+        return
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2:
+        await cb.answer()
+        return
+    try:
+        score = int(parts[1])
+    except ValueError:
+        await cb.answer()
+        return
+
+    data = await state.get_data()
+    text = data.get("example_text") or ""
+    genre = data.get("example_genre") or "unknown"
+    if not text:
+        await cb.answer("Текст потерян, попробуй заново", show_alert=True)
+        await state.clear()
+        return
+
+    s_cfg = get_settings()
+    async with get_session() as session:
+        ex = await add_style_example(
+            session,
+            text=text,
+            genre=genre,
+            source="manual",
+            score=score,
+            note=f"Manual upload, user score {score}",
+        )
+        ex_id = ex.id
+
+    await cb.answer("Сохранено")
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(
+            M.EXAMPLE_SAVED.format(genre=_GENRE_LABELS.get(genre, genre), score=score)
+        )
+
+    # Stylist — извлекаем хорошие фразы, если оценка достаточная
+    if score >= s_cfg.auto_save_as_example_threshold and cb.message:
+        try:
+            stylist_res = await extract_style(text)
+            async with get_session() as session:
+                for phrase, kind in stylist_res.good_phrases:
+                    await add_good_phrase(session, phrase=phrase, kind=kind)
+            await cb.message.answer(
+                M.EXAMPLE_STYLIST_DONE.format(n=len(stylist_res.good_phrases)),
+                reply_markup=back_to_menu_kb(),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Stylist on manual example failed: {e}")
+            if cb.message:
+                await cb.message.answer(
+                    "Сохранил, но стилист сейчас занят — фразы извлеку при следующем разе.",
+                    reply_markup=back_to_menu_kb(),
+                )
+    elif cb.message:
+        await cb.message.answer(
+            "(Оценка ниже 7 — пример сохранён, но фразы не извлекал.)",
+            reply_markup=back_to_menu_kb(),
+        )
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith("save:"))

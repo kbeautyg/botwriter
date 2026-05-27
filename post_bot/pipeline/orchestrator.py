@@ -128,7 +128,7 @@ async def generate_post(brief_id: int) -> PipelineResult:
                 tokens_out=writer_res.tokens_out,
             )
 
-            critic_res = await review(writer_res.draft)
+            critic_res = await review(writer_res.draft, target_length_words=plan.length_words)
             await attach_critic_review(
                 session,
                 draft_db,
