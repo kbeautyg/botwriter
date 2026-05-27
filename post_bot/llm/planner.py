@@ -48,14 +48,43 @@ class Plan:
         )
 
 
-async def plan_post(brief_text: str) -> Plan:
+def _format_directives(directives: list[tuple[str, str]]) -> str:
+    """directives: [(text, polarity), ...]"""
+    if not directives:
+        return "(нет — это первая итерация)"
+    lines = []
+    for text, polarity in directives:
+        marker = "DO" if polarity == "do" else "DON'T"
+        lines.append(f"  [{marker}] {text}")
+    return "\n".join(lines)
+
+
+async def plan_post(
+    brief_text: str,
+    *,
+    target_length_words: int | None = None,
+    directives: list[tuple[str, str]] | None = None,
+) -> Plan:
     s = get_settings()
-    user_prompt = (
-        "═══ МАТЕРИАЛ АВТОРА ═══\n"
-        f"{brief_text.strip()}\n"
-        "═══ /МАТЕРИАЛ ═══\n\n"
-        "Собери план поста по формату из системной инструкции. Строгий JSON."
-    )
+    sections = [
+        "═══ МАТЕРИАЛ АВТОРА ═══",
+        brief_text.strip(),
+        "═══ /МАТЕРИАЛ ═══",
+    ]
+    if target_length_words:
+        sections.append(
+            f"\n═══ ЦЕЛЕВАЯ ДЛИНА ═══\n"
+            f"Автор выбрал длину: ~{target_length_words} слов. "
+            f"Поставь length_words ровно {target_length_words}, не отклоняйся больше чем на ±20%."
+        )
+    if directives:
+        sections.append(
+            "\n═══ ДИРЕКТИВЫ АВТОРА (из его прошлых комментариев) ═══\n"
+            f"{_format_directives(directives)}\n"
+            "Учитывай их при выборе тона, структуры, концовки."
+        )
+    sections.append("\nСобери план поста по формату из системной инструкции. Строгий JSON.")
+    user_prompt = "\n".join(sections)
     logger.info(f"Planner: model={s.model_critic} (cheap), brief_chars={len(brief_text)}")
     # Используем cheap-модель (та же что у Critic'а) — это структурное решение, не творчество
     res = await chat(

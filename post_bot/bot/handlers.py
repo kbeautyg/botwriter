@@ -13,20 +13,24 @@ from post_bot.bot import messages as M
 from post_bot.bot.keyboards import (
     after_rating_kb,
     brief_collecting_kb,
+    length_choice_kb,
     rating_kb,
 )
 from post_bot.bot.states import BriefStates
 from post_bot.config import get_settings
 from post_bot.db.engine import get_session
-from post_bot.db.models import Brief, Post
+from post_bot.db.models import Post, UserDirective
 from post_bot.db.repository import (
+    add_user_directive,
     append_text,
     append_voice,
     create_brief,
+    get_active_directives,
     get_brief,
     rate_post,
     set_brief_status,
 )
+from post_bot.llm.feedback_extractor import extract_directives
 from post_bot.llm.stt import transcribe
 from post_bot.pipeline.orchestrator import generate_post, save_post_as_example
 from post_bot.utils.logger import logger
@@ -62,12 +66,57 @@ async def cmd_new(event: Message | CallbackQuery, state: FSMContext) -> None:
         brief_id = brief.id
 
     await state.clear()
-    await state.set_state(BriefStates.waiting)
+    await state.set_state(BriefStates.choosing_length)
     await state.update_data(brief_id=brief_id)
 
     if isinstance(event, CallbackQuery):
         await event.answer()
-    await msg.answer(M.NEW_BRIEF, reply_markup=brief_collecting_kb())  # type: ignore[union-attr]
+    await msg.answer(M.LENGTH_PROMPT, reply_markup=length_choice_kb())  # type: ignore[union-attr]
+
+
+# ----------------------------- выбор длины -----------------------------
+
+@router.callback_query(F.data.startswith("length:"))
+async def on_length_choice(cb: CallbackQuery, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    if current_state != BriefStates.choosing_length.state:
+        await cb.answer()
+        return
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2:
+        await cb.answer()
+        return
+    value = parts[1]
+    target: int | None
+    label: str
+    if value == "auto":
+        target = None
+        label = "Авто"
+    else:
+        try:
+            target = int(value)
+        except ValueError:
+            target = None
+            label = "Авто"
+        else:
+            label = f"~{target} слов"
+
+    data = await state.get_data()
+    brief_id = data.get("brief_id")
+    if brief_id:
+        async with get_session() as s:
+            brief = await get_brief(s, brief_id)
+            if brief:
+                brief.target_length_words = target
+
+    await state.set_state(BriefStates.waiting)
+    await cb.answer()
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(
+            M.NEW_BRIEF_AFTER_LENGTH.format(length_label=label),
+            reply_markup=brief_collecting_kb(),
+        )
 
 
 # ----------------------------- /cancel -----------------------------
@@ -259,6 +308,89 @@ async def on_rate(cb: CallbackQuery, state: FSMContext) -> None:
     if cb.message:
         await cb.message.edit_reply_markup(reply_markup=after_rating_kb())
         await cb.message.answer(M.render_rating_saved(rating, saved))
+
+
+# ----------------------------- комментарий к посту -----------------------------
+
+@router.callback_query(F.data.startswith("comment:"))
+async def on_comment_button(cb: CallbackQuery, state: FSMContext) -> None:
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2:
+        await cb.answer()
+        return
+    post_id = int(parts[1])
+    await state.set_state(BriefStates.awaiting_comment)
+    await state.update_data(comment_post_id=post_id)
+    await cb.answer()
+    if cb.message:
+        await cb.message.answer(M.COMMENT_PROMPT)
+
+
+@router.message(BriefStates.awaiting_comment, F.text)
+async def on_comment_text(message: Message, state: FSMContext) -> None:
+    if message.text and message.text.startswith("/"):
+        return
+    data = await state.get_data()
+    post_id = data.get("comment_post_id")
+    comment = (message.text or "").strip()
+    if not post_id or not comment:
+        return
+
+    # сохранить как user_note
+    async with get_session() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            existing = post.user_note or ""
+            post.user_note = (existing + "\n" + comment).strip() if existing else comment
+
+    # извлечь директивы
+    extracted = None
+    try:
+        extracted = await extract_directives(comment)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Directive extraction failed: {e}")
+
+    saved_count = 0
+    if extracted and extracted.directives:
+        async with get_session() as session:
+            for d in extracted.directives:
+                await add_user_directive(
+                    session,
+                    text=d.text,
+                    polarity=d.polarity,
+                    source_post_id=post_id,
+                    raw_comment=comment,
+                )
+                saved_count += 1
+
+    await state.set_state(BriefStates.awaiting_rating)
+    if saved_count and extracted:
+        rules_lines = []
+        for d in extracted.directives:
+            marker = "DO" if d.polarity == "do" else "DON'T"
+            rules_lines.append(f"• [{marker}] {d.text}")
+        rules = "\n".join(rules_lines)
+        await message.answer(f"{M.COMMENT_SAVED}\n\nВыделил правила:\n{rules}")
+    else:
+        await message.answer("✅ Комментарий сохранил, но конкретных правил не выделил.")
+
+
+# ----------------------------- /directives -----------------------------
+
+@router.message(Command("directives"))
+async def cmd_directives(message: Message) -> None:
+    async with get_session() as s:
+        directives = await get_active_directives(s, limit=30)
+    if not directives:
+        await message.answer(
+            "Директив пока нет. Они появляются когда ты пишешь 💬 Комментарий к посту."
+        )
+        return
+    lines = ["📋 Активные директивы (учитываются в каждой генерации):\n"]
+    for d in directives:
+        marker = "DO" if d.polarity == "do" else "DON'T"
+        lines.append(f"• [{marker}] {d.text}")
+    await message.answer("\n".join(lines))
 
 
 @router.callback_query(F.data.startswith("save:"))

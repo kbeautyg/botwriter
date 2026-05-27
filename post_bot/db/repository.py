@@ -13,6 +13,7 @@ from post_bot.db.models import (
     GoodPhrase,
     Post,
     StyleExample,
+    UserDirective,
 )
 
 
@@ -209,3 +210,44 @@ async def get_bad_phrases(session: AsyncSession, limit: int = 50) -> list[BadPhr
     stmt = select(BadPhrase).order_by(BadPhrase.weight.desc()).limit(limit)
     res = await session.execute(stmt)
     return list(res.scalars().all())
+
+
+# --- User directives ---
+
+async def add_user_directive(
+    session: AsyncSession,
+    *,
+    text: str,
+    polarity: str = "do",
+    source_post_id: int | None = None,
+    raw_comment: str | None = None,
+) -> UserDirective:
+    d = UserDirective(
+        text=text.strip(),
+        polarity=polarity if polarity in ("do", "dont") else "do",
+        source_post_id=source_post_id,
+        raw_comment=raw_comment,
+    )
+    session.add(d)
+    await session.flush()
+    return d
+
+
+async def get_active_directives(
+    session: AsyncSession, limit: int = 20
+) -> list[UserDirective]:
+    stmt = (
+        select(UserDirective)
+        .where(UserDirective.is_active.is_(True))
+        .order_by(UserDirective.weight.desc(), UserDirective.created_at.desc())
+        .limit(limit)
+    )
+    res = await session.execute(stmt)
+    return list(res.scalars().all())
+
+
+async def deactivate_directive(session: AsyncSession, directive_id: int) -> None:
+    d = await session.get(UserDirective, directive_id)
+    if d:
+        d.is_active = False
+        await session.flush()

@@ -46,12 +46,23 @@ def _format_good_phrases(phrases: list[GoodPhrase]) -> str:
     return "\n".join(parts)
 
 
+def _format_directives(directives: list[tuple[str, str]]) -> str:
+    if not directives:
+        return "(пока пусто)"
+    lines = []
+    for text, polarity in directives:
+        marker = "DO" if polarity == "do" else "DON'T"
+        lines.append(f"  [{marker}] {text}")
+    return "\n".join(lines)
+
+
 def _build_user_prompt(
     *,
     brief_text: str,
     plan: Plan | None,
     examples: list[StyleExample],
     good_phrases: list[GoodPhrase],
+    directives: list[tuple[str, str]] | None,
     genre_hint: str | None,
     critic_feedback: str | None,
     critic_must_fix: list[str] | None,
@@ -73,6 +84,12 @@ def _build_user_prompt(
 
     sections.append("\n═══ ХАРАКТЕРНАЯ ЛЕКСИКА АВТОРА (можешь использовать, не обязан) ═══")
     sections.append(_format_good_phrases(good_phrases))
+
+    if directives:
+        sections.append(
+            "\n═══ ДИРЕКТИВЫ АВТОРА (правила из его прошлых комментариев — обязательны) ═══"
+        )
+        sections.append(_format_directives(directives))
 
     if previous_draft and critic_feedback:
         sections.append("\n═══ ПРЕДЫДУЩАЯ ПОПЫТКА (которую критик завернул) ═══")
@@ -100,6 +117,7 @@ async def write_draft(
     plan: Plan | None = None,
     examples: list[StyleExample],
     good_phrases: list[GoodPhrase],
+    directives: list[tuple[str, str]] | None = None,
     genre_hint: str | None = None,
     critic_feedback: str | None = None,
     critic_must_fix: list[str] | None = None,
@@ -111,6 +129,7 @@ async def write_draft(
         plan=plan,
         examples=examples,
         good_phrases=good_phrases,
+        directives=directives,
         genre_hint=genre_hint,
         critic_feedback=critic_feedback,
         critic_must_fix=critic_must_fix,

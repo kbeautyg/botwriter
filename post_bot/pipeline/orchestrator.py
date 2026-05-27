@@ -23,6 +23,7 @@ from post_bot.db.repository import (
     attach_critic_review,
     create_draft,
     create_post,
+    get_active_directives,
     get_brief,
     get_good_phrases,
     mark_final_draft,
@@ -57,12 +58,22 @@ async def generate_post(brief_id: int) -> PipelineResult:
         if not brief_text:
             raise ValueError(f"Brief {brief_id} is empty")
 
+        target_length = brief.target_length_words
+        active_dirs = await get_active_directives(session, limit=20)
+        directives_list: list[tuple[str, str]] = [(d.text, d.polarity) for d in active_dirs]
         # 1) Planner: что писать и как
         await set_brief_status(session, brief, "planning")
 
     # Planner делаем вне сессии — он не пишет в БД сам, только LLM-вызов
-    plan = await plan_post(brief_text)
-    logger.info(f"Plan: genre={plan.genre} close={plan.close_type}")
+    plan = await plan_post(
+        brief_text,
+        target_length_words=target_length,
+        directives=directives_list,
+    )
+    # Если автор задал длину явно — она перебивает то, что предложил Planner.
+    if target_length:
+        plan.length_words = target_length
+    logger.info(f"Plan: genre={plan.genre} close={plan.close_type} length={plan.length_words}")
 
     async with get_session() as session:
         brief = await get_brief(session, brief_id)
@@ -100,6 +111,7 @@ async def generate_post(brief_id: int) -> PipelineResult:
                 plan=plan,
                 examples=examples,
                 good_phrases=good_phrases,
+                directives=directives_list,
                 genre_hint=plan.genre or brief.genre_hint,
                 critic_feedback=prev_critic.feedback if prev_critic else None,
                 critic_must_fix=prev_critic.must_fix if prev_critic else None,

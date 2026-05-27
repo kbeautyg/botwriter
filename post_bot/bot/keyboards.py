@@ -5,6 +5,23 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
+def length_choice_kb() -> InlineKeyboardMarkup:
+    """Выбор длины поста в начале брифа."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="Короткий ~200", callback_data="length:200"),
+        InlineKeyboardButton(text="Средний ~400", callback_data="length:400"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="Длинный ~600", callback_data="length:600"),
+        InlineKeyboardButton(text="Авто", callback_data="length:auto"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="brief:cancel"),
+    )
+    return kb.as_markup()
+
+
 def brief_collecting_kb() -> InlineKeyboardMarkup:
     """Кнопки во время сбора брифа."""
     kb = InlineKeyboardBuilder()
@@ -30,7 +47,8 @@ def rating_kb(post_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="+10", callback_data=f"rate:{post_id}:10"),
     )
     kb.row(
-        InlineKeyboardButton(text="💾 Сохранить как образец", callback_data=f"save:{post_id}"),
+        InlineKeyboardButton(text="💬 Комментарий", callback_data=f"comment:{post_id}"),
+        InlineKeyboardButton(text="💾 В образцы", callback_data=f"save:{post_id}"),
     )
     kb.row(
         InlineKeyboardButton(text="🆕 Новый пост", callback_data="brief:new"),

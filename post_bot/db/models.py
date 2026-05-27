@@ -27,6 +27,7 @@ class Brief(Base):
     status: Mapped[str] = mapped_column(String(20), default="collecting")
     # collecting | planning | generating | done | cancelled
     genre_hint: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    target_length_words: Mapped[int | None] = mapped_column(nullable=True)
     plan_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -134,4 +135,28 @@ class BadPhrase(Base):
     kind: Mapped[str] = mapped_column(String(20), default="cliche")  # cliche | ai_marker | banned_word
     weight: Mapped[float] = mapped_column(default=1.0)
     source: Mapped[str] = mapped_column(String(20), default="seed")  # seed | learned
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class UserDirective(Base):
+    """Директивы автора, извлечённые из его комментариев к постам.
+    Подкладываются в Writer-промпт как «вот что автор сказал на прошлых постах».
+
+    Пример директив:
+      • «никаких эмодзи в постах про деньги»
+      • «не использовать слово "ниша"»
+      • «концовку всегда делать вопросом»
+      • «больше конкретных цифр»
+    """
+    __tablename__ = "user_directives"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    polarity: Mapped[str] = mapped_column(String(10), default="do")  # do | dont
+    weight: Mapped[float] = mapped_column(default=1.0)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    source_post_id: Mapped[int | None] = mapped_column(
+        ForeignKey("posts.id", ondelete="SET NULL"), nullable=True
+    )
+    raw_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
