@@ -117,7 +117,7 @@ async def plan_post(
         system=PLANNER_SYSTEM,
         user=user_prompt,
         temperature=0.5,
-        max_tokens=1200,
+        max_tokens=3000,  # reasoning-моделям нужен запас на думание
         json_mode=True,
     )
     payload = res.parse_json()

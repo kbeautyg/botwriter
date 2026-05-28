@@ -58,6 +58,9 @@ class ChatResult:
             return {}
 
 
+MAX_TOKEN_CEILING = 16000
+
+
 async def chat(
     *,
     model: str,
@@ -67,13 +70,23 @@ async def chat(
     max_tokens: int = 2000,
     json_mode: bool = False,
 ) -> ChatResult:
-    """Один-shot chat completion с авто-адаптацией под reasoning-модели."""
+    """Один-shot chat completion с авто-адаптацией под reasoning-модели.
+
+    Для reasoning (gpt-5.x/o1/o3/o4/gpt-4.1) — авто-retry с удвоением бюджета,
+    если content пустой (reasoning сожрал все токены).
+    """
     client = get_async_openai()
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    if _is_reasoning(model):
+    is_reasoning = _is_reasoning(model)
+    # Для reasoning-моделей сразу даём минимум 6000 токенов — иначе reasoning
+    # сожрёт весь бюджет и content вернётся пустым.
+    if is_reasoning and max_tokens < 6000:
+        max_tokens = max(max_tokens, 6000)
+
+    if is_reasoning:
         kwargs: dict = {
             "model": model,
             "messages": messages,
@@ -90,12 +103,36 @@ async def chat(
         kwargs["response_format"] = {"type": "json_object"}
 
     last_err: Exception | None = None
-    for attempt in range(3):
+    empty_retries = 0  # сколько раз удваивали бюджет из-за пустого ответа
+
+    for attempt in range(5):
         try:
             resp = await client.chat.completions.create(**kwargs)
             text = (resp.choices[0].message.content or "").strip()
             finish = getattr(resp.choices[0], "finish_reason", "") or ""
             usage = getattr(resp, "usage", None)
+
+            # Пустой content + finish=length → reasoning сжёг бюджет.
+            # Удваиваем max_completion_tokens до потолка.
+            if not text and finish in ("length", "stop") and empty_retries < 2:
+                current = (
+                    kwargs.get("max_completion_tokens")
+                    or kwargs.get("max_tokens")
+                    or max_tokens
+                )
+                new_max = min(current * 2, MAX_TOKEN_CEILING)
+                if new_max > current:
+                    empty_retries += 1
+                    logger.warning(
+                        f"Empty content from {model} (finish={finish}). "
+                        f"Doubling token budget: {current} → {new_max}"
+                    )
+                    if "max_completion_tokens" in kwargs:
+                        kwargs["max_completion_tokens"] = new_max
+                    if "max_tokens" in kwargs:
+                        kwargs["max_tokens"] = new_max
+                    continue
+
             return ChatResult(
                 text=text,
                 model=model,
@@ -123,4 +160,4 @@ async def chat(
             logger.warning(f"OpenAI attempt {attempt + 1} failed: {e!r}")
             await asyncio.sleep(0.5 * (attempt + 1))
 
-    raise RuntimeError(f"OpenAI failed after 3 attempts: {last_err!r}")
+    raise RuntimeError(f"OpenAI failed after 5 attempts: {last_err!r}")

@@ -35,7 +35,7 @@ async def extract_style(post_text: str) -> StylistResult:
         system=STYLIST_SYSTEM,
         user=user_prompt,
         temperature=0.3,
-        max_tokens=1000,
+        max_tokens=2500,  # reasoning-моделям мало стандартных
         json_mode=True,
     )
     payload = res.parse_json()

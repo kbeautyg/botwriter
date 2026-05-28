@@ -155,7 +155,7 @@ async def write_draft(
         system=WRITER_SYSTEM,
         user=user_prompt,
         temperature=0.85,
-        max_tokens=2500,
+        max_tokens=8000,  # для reasoning-моделей (gpt-5.x) важен большой бюджет
         json_mode=True,
     )
     payload = res.parse_json()

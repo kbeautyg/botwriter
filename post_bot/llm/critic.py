@@ -70,7 +70,7 @@ async def review(
         system=CRITIC_SYSTEM,
         user=user_prompt,
         temperature=0.2,
-        max_tokens=1500,
+        max_tokens=4000,  # reasoning-моделям мало стандартных 1500
         json_mode=True,
     )
     payload = res.parse_json()

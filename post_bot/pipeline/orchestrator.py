@@ -174,6 +174,17 @@ async def generate_post(brief_id: int) -> PipelineResult:
             prev_critic = critic_res
 
         assert best_draft_db is not None and best_writer is not None
+
+        # Защита: если все итерации дали пустой текст (reasoning-модель сжёг бюджет
+        # или OpenAI вернул empty content) — не делаем Post, чтобы не упасть в Telegram.
+        if not (best_draft_db.text or "").strip():
+            await set_brief_status(session, brief, "cancelled")
+            raise RuntimeError(
+                "Все итерации дали пустой черновик. Это бывает с reasoning-моделями "
+                "(gpt-5.x) при нехватке токенового бюджета. Проверь модель в Variables "
+                "или увеличь MAX_REWRITE_ITERATIONS."
+            )
+
         await mark_final_draft(session, best_draft_db)
 
         post = await create_post(

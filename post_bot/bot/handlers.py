@@ -207,6 +207,17 @@ async def cmd_done(event: Message | CallbackQuery, state: FSMContext, bot: Bot) 
     await state.update_data(post_id=result.post.id)
     await status_msg.delete()
 
+    final_text = (result.final_draft.text or "").strip()
+    if not final_text:
+        # Все итерации пустые — модель не справилась (обычно gpt-5.x + reasoning).
+        await msg.answer(  # type: ignore[union-attr]
+            "⚠️ Не получилось собрать черновик: модель вернула пустой ответ. "
+            "Попробуй ещё раз через /new — иногда reasoning-модели «зависают». "
+            "Если повторяется — смени MODEL_WRITER на gpt-4o в Variables на Railway."
+        )
+        await state.clear()
+        return
+
     # Заголовок — отдельным сообщением (короткий)
     await msg.answer(  # type: ignore[union-attr]
         M.render_post_header(
@@ -216,7 +227,7 @@ async def cmd_done(event: Message | CallbackQuery, state: FSMContext, bot: Bot) 
         )
     )
     # Сам пост — отдельным, без parse_mode (чтобы символы * _ не сломали разметку)
-    await msg.answer(result.final_draft.text)  # type: ignore[union-attr]
+    await msg.answer(final_text)  # type: ignore[union-attr]
     # Кнопки оценки — третьим
     await msg.answer(  # type: ignore[union-attr]
         M.render_rating_prompt(),
