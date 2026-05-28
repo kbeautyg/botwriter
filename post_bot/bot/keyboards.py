@@ -95,7 +95,9 @@ GENRES_RU = [
     ("contrarian_take", "Провокация"),
     ("numbered_lessons", "Нумерованный разбор"),
     ("personal_story", "Личная история"),
+    ("reflection", "Рефлексия/мысль"),
     ("tutorial", "Туториал/разбор"),
+    ("qa_explainer", "Вопрос-ответ (деловой)"),
     ("announcement", "Анонс/новость"),
     ("news_comment", "Коммент к новости"),
 ]
