@@ -73,11 +73,10 @@ async def _run() -> None:
     # /app/* — это файловая система контейнера, она пересоздаётся при каждом deploy.
     if is_railway and not str(db_path).startswith("/data"):
         logger.error(
-            "❌ DB_PATH=%s — это путь ВНУТРИ контейнера, не volume. "
-            "База данных будет ОБНУЛЕНА при следующем deploy. "
-            "Исправь: Railway → Variables → DB_PATH=/data/post_bot.sqlite, "
-            "затем Deploy → Redeploy. Volume должен быть смонтирован на /data.",
-            db_path,
+            f"❌ DB_PATH={db_path} — это путь ВНУТРИ контейнера, не volume. "
+            f"База данных будет ОБНУЛЕНА при следующем deploy. "
+            f"Исправь: Railway → Variables → УДАЛИ переменную DB_PATH целиком "
+            f"(или поставь /data/post_bot.sqlite без точки), затем Deploy → Redeploy."
         )
 
     await init_db()

@@ -6,7 +6,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,26 @@ class Settings(BaseSettings):
     # DB — автоматически /data/... на Railway, ./data/... локально.
     # Можно переопределить через env DB_PATH.
     db_path: str = Field(default_factory=_default_db_path)
+
+    @field_validator("db_path", mode="after")
+    @classmethod
+    def _force_volume_on_railway(cls, v: str) -> str:
+        """Если на Railway и путь относительный — принудительно переключаем
+        на /data/post_bot.sqlite (стандартный volume mount). Это спасает от
+        частой ошибки, когда DB_PATH задан как «./data/...» — такой путь
+        резолвится в /app/data/ и теряется при rebuild.
+
+        Абсолютные пути (начинаются с /) — оставляем как заданы: пользователь
+        может смонтировать volume в другую папку (/storage, /var/lib/db).
+        """
+        on_railway = bool(
+            os.environ.get("RAILWAY_ENVIRONMENT")
+            or os.environ.get("RAILWAY_PROJECT_ID")
+            or os.environ.get("RAILWAY_SERVICE_ID")
+        )
+        if on_railway and v and not v.startswith("/"):
+            return "/data/post_bot.sqlite"
+        return v
 
     # Pipeline
     max_rewrite_iterations: int = 2
