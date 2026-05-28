@@ -11,7 +11,7 @@ async def pick_examples(
     session: AsyncSession,
     *,
     genre: str | None,
-    limit: int = 3,
+    limit: int = 5,
 ) -> list[StyleExample]:
     """Вернуть до `limit` эталонов: сначала по жанру, потом добивая разнообразием."""
     base = select(StyleExample).where(StyleExample.is_active.is_(True))

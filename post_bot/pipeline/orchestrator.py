@@ -101,7 +101,7 @@ async def generate_post(brief_id: int) -> PipelineResult:
         }
         await set_brief_status(session, brief, "generating")
 
-        examples = await pick_examples(session, genre=plan.genre or brief.genre_hint, limit=3)
+        examples = await pick_examples(session, genre=plan.genre or brief.genre_hint, limit=5)
         good_phrases = await get_good_phrases(session, limit=30)
         # Для Writer — глобальные + директивы выбранного жанра
         full_dirs = await get_active_directives(session, genre=plan.genre, limit=30)

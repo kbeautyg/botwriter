@@ -39,12 +39,20 @@ class Settings(BaseSettings):
     #   "[1, 2, 3]"      -> [1, 2, 3]   (JSON, на случай если кто-то так задаст)
     allowed_user_ids_raw: str = Field("", alias="ALLOWED_USER_IDS")
 
-    # OpenAI
+    # OpenAI (Whisper всегда здесь; писатели/критики можно и через Claude)
     openai_api_key: str = Field(...)
     openai_base_url: str | None = None
-    model_writer: str = "gpt-4o"
-    model_critic: str = "gpt-4o-mini"
-    model_stylist: str = "gpt-4o-mini"
+    # Anthropic (для Claude). Необязательно — если пусто, используем OpenAI везде.
+    anthropic_api_key: str = ""
+    anthropic_base_url: str | None = None
+    # Модели:
+    # • gpt-* — пойдут через OpenAI
+    # • claude-* — пойдут через Anthropic (нужен ANTHROPIC_API_KEY)
+    # • whisper-* — STT, всегда через OpenAI
+    model_writer: str = "claude-sonnet-4-6"
+    model_critic: str = "claude-sonnet-4-6"
+    model_stylist: str = "claude-sonnet-4-6"
+    model_planner: str = "claude-sonnet-4-6"
     model_stt: str = "whisper-1"
 
     # DB — автоматически /data/... на Railway, ./data/... локально.
