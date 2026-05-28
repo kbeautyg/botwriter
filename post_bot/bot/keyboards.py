@@ -110,6 +110,59 @@ def genre_choice_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def directives_list_kb(items: list[tuple[int, str, str, str | None]]) -> InlineKeyboardMarkup:
+    """Список директив с кнопкой 🗑 у каждой + «➕ Добавить» сверху.
+    items = [(id, polarity, text, genre_scope), ...]
+    """
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ Добавить правило", callback_data="directive:add"))
+    for d_id, polarity, text, genre_scope in items:
+        marker = "✅" if polarity == "do" else "🚫"
+        scope = f" [{genre_scope[:3]}]" if genre_scope else ""
+        # Длина callback'а ограничена 64 байтами — короткий id хватит.
+        # Текст обрезаем для кнопки, полный показывается выше.
+        preview = text if len(text) <= 36 else text[:34] + "…"
+        kb.row(
+            InlineKeyboardButton(
+                text=f"{marker}{scope} {preview}  🗑",
+                callback_data=f"directive:del:{d_id}",
+            )
+        )
+    kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home"))
+    return kb.as_markup()
+
+
+def directive_polarity_kb() -> InlineKeyboardMarkup:
+    """Шаг 2: DO / DON'T при добавлении правила вручную."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ DO (что делать)", callback_data="dpolarity:do"),
+        InlineKeyboardButton(text="🚫 DON'T (не делать)", callback_data="dpolarity:dont"),
+    )
+    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="menu:home"))
+    return kb.as_markup()
+
+
+def directive_genre_kb() -> InlineKeyboardMarkup:
+    """Шаг 3: глобальная или жанровая директива."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🌐 Глобально (на все посты)", callback_data="dgenre:global"))
+    for code, label in GENRES_RU:
+        kb.row(InlineKeyboardButton(text=f"🎯 {label}", callback_data=f"dgenre:{code}"))
+    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="menu:home"))
+    return kb.as_markup()
+
+
+def confirm_delete_directive_kb(directive_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"directive:confirm_del:{directive_id}"),
+        InlineKeyboardButton(text="← Назад", callback_data="menu:directives"),
+    )
+    return kb.as_markup()
+
+
 def score_choice_kb() -> InlineKeyboardMarkup:
     """Выбор оценки для примера. 7 — порог попадания в активный пул."""
     kb = InlineKeyboardBuilder()

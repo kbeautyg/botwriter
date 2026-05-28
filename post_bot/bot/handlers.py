@@ -15,16 +15,20 @@ from post_bot.bot.keyboards import (
     after_rating_kb,
     back_to_menu_kb,
     brief_collecting_kb,
+    confirm_delete_directive_kb,
+    directive_genre_kb,
+    directive_polarity_kb,
+    directives_list_kb,
     genre_choice_kb,
     length_choice_kb,
     main_menu_kb,
     rating_kb,
     score_choice_kb,
 )
-from post_bot.bot.states import BriefStates, ExampleStates
+from post_bot.bot.states import BriefStates, DirectiveStates, ExampleStates
 from post_bot.config import get_settings
 from post_bot.db.engine import get_session
-from post_bot.db.models import Post
+from post_bot.db.models import Post, UserDirective
 from post_bot.db.repository import (
     add_good_phrase,
     add_style_example,
@@ -32,6 +36,7 @@ from post_bot.db.repository import (
     append_text,
     append_voice,
     create_brief,
+    deactivate_directive,
     get_brief,
     list_all_directives,
     rate_post,
@@ -414,32 +419,34 @@ async def _send_directives(send) -> None:
     async with get_session() as s:
         directives = await list_all_directives(s, limit=50)
     if not directives:
-        await send(
-            "Директив пока нет. Они появляются когда ты пишешь 💬 Комментарий к посту.",
-            reply_markup=back_to_menu_kb(),
-        )
+        # Только кнопка «➕ Добавить» через directives_list_kb с пустым списком
+        await send(M.DIRECTIVES_EMPTY, reply_markup=directives_list_kb([]))
         return
+
     # Группируем: сначала глобальные, потом по жанрам
-    globals_: list = []
-    by_genre: dict[str, list] = {}
+    globals_: list[UserDirective] = []
+    by_genre: dict[str, list[UserDirective]] = {}
     for d in directives:
         if d.genre_scope:
             by_genre.setdefault(d.genre_scope, []).append(d)
         else:
             globals_.append(d)
 
-    lines = ["📋 Активные директивы:\n"]
+    lines = [M.DIRECTIVES_HEADER, ""]
     if globals_:
-        lines.append("🌐 Глобальные (на все посты):")
+        lines.append("🌐 Глобальные:")
         for d in globals_:
-            marker = "DO" if d.polarity == "do" else "DON'T"
-            lines.append(f"  • [{marker}] {d.text}")
+            marker = "✅" if d.polarity == "do" else "🚫"
+            lines.append(f"  {marker} {d.text}")
     for genre, items in by_genre.items():
         lines.append(f"\n🎯 Для жанра «{genre}»:")
         for d in items:
-            marker = "DO" if d.polarity == "do" else "DON'T"
-            lines.append(f"  • [{marker}] {d.text}")
-    await send("\n".join(lines), reply_markup=back_to_menu_kb())
+            marker = "✅" if d.polarity == "do" else "🚫"
+            lines.append(f"  {marker} {d.text}")
+
+    # Кнопки: ➕ Добавить + 🗑 у каждой директивы
+    items_for_kb = [(d.id, d.polarity, d.text, d.genre_scope) for d in directives]
+    await send("\n".join(lines), reply_markup=directives_list_kb(items_for_kb))
 
 
 @router.message(Command("directives"))
@@ -609,3 +616,145 @@ async def on_edit_after_rating(message: Message, state: FSMContext) -> None:
             return
         post.edited_text = edited
     await message.answer("📝 Правка сохранена. Не забудь поставить оценку финального варианта.")
+
+
+# ----------------------------- управление директивами (UI) -----------------------------
+
+_POLARITY_MARKER = {"do": "✅", "dont": "🚫"}
+
+
+def _format_directive_line(d: UserDirective) -> str:
+    marker = _POLARITY_MARKER.get(d.polarity, "•")
+    scope = f" [{d.genre_scope}]" if d.genre_scope else ""
+    return f"{marker}{scope} {d.text}"
+
+
+@router.callback_query(F.data == "directive:add")
+async def on_directive_add(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(DirectiveStates.entering_text)
+    await cb.answer()
+    if cb.message:
+        await cb.message.answer(M.DIRECTIVE_NEW_PROMPT, reply_markup=back_to_menu_kb())
+
+
+@router.message(DirectiveStates.entering_text, F.text)
+async def on_directive_text(message: Message, state: FSMContext) -> None:
+    if message.text and message.text.startswith("/"):
+        return
+    text = (message.text or "").strip()
+    if len(text) < 5:
+        await message.answer(M.DIRECTIVE_TEXT_TOO_SHORT, reply_markup=back_to_menu_kb())
+        return
+    if len(text) > 200:
+        await message.answer(M.DIRECTIVE_TEXT_TOO_LONG, reply_markup=back_to_menu_kb())
+        return
+    await state.update_data(directive_text=text)
+    await state.set_state(DirectiveStates.choosing_polarity)
+    await message.answer(M.DIRECTIVE_NEW_POLARITY, reply_markup=directive_polarity_kb())
+
+
+@router.callback_query(F.data.startswith("dpolarity:"))
+async def on_directive_polarity(cb: CallbackQuery, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current != DirectiveStates.choosing_polarity.state:
+        await cb.answer()
+        return
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2 or parts[1] not in ("do", "dont"):
+        await cb.answer()
+        return
+    await state.update_data(directive_polarity=parts[1])
+    await state.set_state(DirectiveStates.choosing_genre)
+    await cb.answer()
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(M.DIRECTIVE_NEW_GENRE, reply_markup=directive_genre_kb())
+
+
+@router.callback_query(F.data.startswith("dgenre:"))
+async def on_directive_genre(cb: CallbackQuery, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current != DirectiveStates.choosing_genre.state:
+        await cb.answer()
+        return
+    parts = (cb.data or "").split(":")
+    if len(parts) != 2:
+        await cb.answer()
+        return
+    raw = parts[1]
+    genre_scope = None if raw == "global" else raw
+
+    data = await state.get_data()
+    text = data.get("directive_text") or ""
+    polarity = data.get("directive_polarity") or "do"
+    if not text:
+        await cb.answer("Текст потерян, начни заново", show_alert=True)
+        await state.clear()
+        return
+
+    async with get_session() as session:
+        await add_user_directive(
+            session,
+            text=text,
+            polarity=polarity,
+            genre_scope=genre_scope,
+            raw_comment=None,
+        )
+
+    await state.clear()
+    marker = _POLARITY_MARKER.get(polarity, "•")
+    scope = f" [{genre_scope}]" if genre_scope else ""
+    await cb.answer("Сохранил")
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(
+            M.DIRECTIVE_SAVED.format(marker=marker, scope=scope, text=text)
+        )
+        await _send_directives(cb.message.answer)
+
+
+@router.callback_query(F.data.startswith("directive:del:"))
+async def on_directive_delete_ask(cb: CallbackQuery) -> None:
+    parts = (cb.data or "").split(":")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    try:
+        d_id = int(parts[2])
+    except ValueError:
+        await cb.answer()
+        return
+    async with get_session() as session:
+        d = await session.get(UserDirective, d_id)
+    if d is None:
+        await cb.answer("Уже удалено", show_alert=True)
+        return
+    marker = _POLARITY_MARKER.get(d.polarity, "•")
+    scope = f" [{d.genre_scope}]" if d.genre_scope else ""
+    await cb.answer()
+    if cb.message:
+        await cb.message.answer(
+            M.DIRECTIVE_DELETE_CONFIRM.format(marker=marker, scope=scope, text=d.text),
+            reply_markup=confirm_delete_directive_kb(d_id),
+        )
+
+
+@router.callback_query(F.data.startswith("directive:confirm_del:"))
+async def on_directive_delete_confirm(cb: CallbackQuery) -> None:
+    parts = (cb.data or "").split(":")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    try:
+        d_id = int(parts[2])
+    except ValueError:
+        await cb.answer()
+        return
+    async with get_session() as session:
+        await deactivate_directive(session, d_id)
+    await cb.answer("Удалено")
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(M.DIRECTIVE_DELETED)
+        await _send_directives(cb.message.answer)

@@ -17,3 +17,10 @@ class ExampleStates(StatesGroup):
     waiting_text = State()       # ждём текст поста
     waiting_genre = State()      # ждём выбор жанра
     waiting_score = State()      # ждём выбор оценки
+
+
+class DirectiveStates(StatesGroup):
+    """Поток добавления директивы руками (не из комментария)."""
+    entering_text = State()      # ждём текст правила
+    choosing_polarity = State()  # DO / DON'T
+    choosing_genre = State()     # глобально / конкретный жанр
