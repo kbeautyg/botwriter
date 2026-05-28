@@ -54,8 +54,33 @@ async def _run() -> None:
         f"stt={s.model_stt} allowed_ids={s.allowed_user_ids}"
     )
 
+    # Диагностика БД ДО init — видно состояние файла перед миграциями
+    from pathlib import Path
+    db_path = Path(s.db_path).resolve()
+    db_exists = db_path.exists()
+    db_size = db_path.stat().st_size if db_exists else 0
+    logger.info(
+        f"DB path resolved: {db_path} (exists={db_exists}, size={db_size} bytes)"
+    )
+    if not str(db_path).startswith(("/data", "/app/data")) and "RAILWAY" in os.environ.get(
+        "RAILWAY_PROJECT_ID", "") + os.environ.get("RAILWAY_ENVIRONMENT", ""):
+        logger.warning(
+            "⚠️  DB_PATH вне /data — БД будет ПОТЕРЯНА при следующем deploy. "
+            "Поставь Variables → DB_PATH=/data/post_bot.sqlite и смонтируй Volume на /data."
+        )
+
     await init_db()
-    logger.info("DB initialized")
+    logger.info("DB schema initialized (create_all + migrations)")
+
+    # Считаем содержимое БД после миграций — видно, сохранились ли данные
+    from sqlalchemy import func, select
+    from post_bot.db.engine import get_session
+    from post_bot.db.models import Post, StyleExample, UserDirective
+    async with get_session() as session:
+        n_dir = (await session.execute(select(func.count(UserDirective.id)))).scalar() or 0
+        n_post = (await session.execute(select(func.count(Post.id)))).scalar() or 0
+        n_ex = (await session.execute(select(func.count(StyleExample.id)))).scalar() or 0
+    logger.info(f"DB content: directives={n_dir}, posts={n_post}, style_examples={n_ex}")
 
     # Сидим эталоны/фразы только если ещё пусто
     from data.seed import seed_if_empty
