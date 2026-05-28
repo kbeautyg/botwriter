@@ -25,12 +25,23 @@ from post_bot.utils.logger import logger
 _SAYJI_MARKER = "Привет каждому"
 
 
-async def _has_sayji_seed(session) -> bool:
-    """Есть ли в style_examples хотя бы один пост-эталон SAYJI?"""
+async def _count_sayji_seed(session) -> int:
+    """Сколько SAYJI seed-эталонов сейчас в БД."""
     res = await session.execute(
-        select(StyleExample.id).where(StyleExample.text.like(f"%{_SAYJI_MARKER}%"))
+        select(StyleExample.id).where(
+            StyleExample.source == "seed",
+            StyleExample.is_active.is_(True),
+        )
     )
-    return res.first() is not None
+    return len(list(res.scalars().all()))
+
+
+async def _seed_texts_in_db(session) -> set[str]:
+    """Тексты уже засеянных эталонов — чтобы не дублировать при добавлении новых."""
+    res = await session.execute(
+        select(StyleExample.text).where(StyleExample.source == "seed")
+    )
+    return {row[0] for row in res.all()}
 
 
 async def _deactivate_old_artem_seed(session) -> int:
@@ -46,16 +57,30 @@ async def _deactivate_old_artem_seed(session) -> int:
 
 async def seed_if_empty() -> None:
     async with get_session() as s:
-        # 1. StyleExample — SAYJI как основной референс
-        if not await _has_sayji_seed(s):
-            deactivated = await _deactivate_old_artem_seed(s)
-            if deactivated:
-                logger.info(f"Деактивировано {deactivated} старых seed-эталонов (Артём)")
-            for p in SEED_POSTS:
+        # 1. StyleExample — SAYJI как основной референс.
+        # Логика: всегда добавляем SAYJI-эталоны, которых ещё нет в БД (по тексту).
+        # При первом запуске деактивируем старые Артёмовские эталоны.
+        existing_texts = await _seed_texts_in_db(s)
+        # На первом запуске Артёмовские эталоны деактивируются:
+        has_any_seed = bool(existing_texts)
+        if has_any_seed:
+            # Если у нас в БД есть какие-то seed, но нет SAYJI — это первый редеплой
+            # с миграцией. Деактивируем Артёма.
+            has_sayji = any(_SAYJI_MARKER in t for t in existing_texts)
+            if not has_sayji:
+                deactivated = await _deactivate_old_artem_seed(s)
+                if deactivated:
+                    logger.info(f"Деактивировано {deactivated} старых seed-эталонов (Артём)")
+
+        added = 0
+        for p in SEED_POSTS:
+            if p.text not in existing_texts:
                 await add_style_example(
                     s, text=p.text, genre=p.genre, source="seed", score=10, note=p.note
                 )
-            logger.info(f"Засеяно {len(SEED_POSTS)} SAYJI-эталонов")
+                added += 1
+        if added:
+            logger.info(f"Засеяно {added} новых SAYJI-эталонов (всего в SEED_POSTS: {len(SEED_POSTS)})")
 
         # 2. GoodPhrase — для SAYJI добавляем поверх; старые Артёмовские
         # обороты («вкалывать», «инфоцыгане» и т.д.) могут остаться, но Writer
