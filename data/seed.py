@@ -20,6 +20,28 @@ from post_bot.db.repository import (
 from post_bot.utils.logger import logger
 
 
+# Артёмовские обороты, которые НЕ должен использовать SAYJI-голос.
+# При миграции на SAYJI деактивируем их в GoodPhrase (is_active нет в схеме —
+# просто удалим записи, они продублируются из seed если понадобятся).
+_ARTEM_PHRASES_TO_PURGE = [
+    "залетают в это как в шабашку",
+    "срубить лёгких денег",
+    "говноэксперт из каждого утюга",
+    "инфоцыгане обещают золотые горы",
+    "вкалывать 24/7",
+    "отношение как к темке",
+    "на расслабоне систему не построить",
+    "встать у станка",
+    "забудьте про старт с нуля рублей",
+    "сфабрикованные результаты",
+    "ведясь на чужие обещания",
+    "ничего толком, кроме потраченного времени",
+    "автономный бизнес, который приносит дивиденды",
+    "Открытие с провокации без приветствия (для contrarian-постов)",
+    "Прямой адрес «вы» с условием отписки («лучше сразу отпишитесь»)",
+]
+
+
 # Маркер по которому отличаем SAYJI seed: все его посты начинаются с «Привет каждому!»
 # или с заголовка с ⚙️. Используем первое для проверки.
 _SAYJI_MARKER = "Привет каждому"
@@ -82,15 +104,22 @@ async def seed_if_empty() -> None:
         if added:
             logger.info(f"Засеяно {added} новых SAYJI-эталонов (всего в SEED_POSTS: {len(SEED_POSTS)})")
 
-        # 2. GoodPhrase — для SAYJI добавляем поверх; старые Артёмовские
-        # обороты («вкалывать», «инфоцыгане» и т.д.) могут остаться, но Writer
-        # видит их по weight — у SAYJI weight=1.0 (дефолт), их хватит.
-        gp_count = (await s.execute(select(GoodPhrase.id))).scalars().all()
-        # Если good_phrases пустые ИЛИ если в них нет «Привет каждому» — добавим SAYJI-фразы.
+        # 2. GoodPhrase:
+        # 2a. ЧИСТКА Артёмовских оборотов — их Writer всё равно видит как
+        # «характерная лексика», и они утекают в посты даже когда жанр SAYJI.
+        from sqlalchemy import delete
+        purged = 0
+        for ph in _ARTEM_PHRASES_TO_PURGE:
+            res = await s.execute(delete(GoodPhrase).where(GoodPhrase.phrase == ph))
+            purged += res.rowcount or 0
+        if purged:
+            logger.info(f"Удалено {purged} Артёмовских good_phrases (миграция на SAYJI)")
+
+        # 2b. Добавляем SAYJI good_phrases если их ещё нет.
         sayji_phrase_check = await s.execute(
             select(GoodPhrase.id).where(GoodPhrase.phrase.like("%Привет каждому%"))
         )
-        if not gp_count or sayji_phrase_check.first() is None:
+        if sayji_phrase_check.first() is None:
             for phrase, kind in SEED_GOOD_PHRASES:
                 await add_good_phrase(s, phrase=phrase, kind=kind)
             logger.info(f"Засеяно {len(SEED_GOOD_PHRASES)} SAYJI good_phrases")
