@@ -62,11 +62,22 @@ async def _run() -> None:
     logger.info(
         f"DB path resolved: {db_path} (exists={db_exists}, size={db_size} bytes)"
     )
-    if not str(db_path).startswith(("/data", "/app/data")) and "RAILWAY" in os.environ.get(
-        "RAILWAY_PROJECT_ID", "") + os.environ.get("RAILWAY_ENVIRONMENT", ""):
-        logger.warning(
-            "⚠️  DB_PATH вне /data — БД будет ПОТЕРЯНА при следующем deploy. "
-            "Поставь Variables → DB_PATH=/data/post_bot.sqlite и смонтируй Volume на /data."
+    # Detect Railway via обычные env-переменные платформы
+    is_railway = bool(
+        os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_SERVICE_ID")
+    )
+    # На Railway данные персистятся ТОЛЬКО на пути смонтированного volume.
+    # Volume по нашему README монтируется на /data, и DB_PATH должен начинаться с него.
+    # /app/* — это файловая система контейнера, она пересоздаётся при каждом deploy.
+    if is_railway and not str(db_path).startswith("/data"):
+        logger.error(
+            "❌ DB_PATH=%s — это путь ВНУТРИ контейнера, не volume. "
+            "База данных будет ОБНУЛЕНА при следующем deploy. "
+            "Исправь: Railway → Variables → DB_PATH=/data/post_bot.sqlite, "
+            "затем Deploy → Redeploy. Volume должен быть смонтирован на /data.",
+            db_path,
         )
 
     await init_db()
