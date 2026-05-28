@@ -2,11 +2,24 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_db_path() -> str:
+    """На Railway данные персистятся только на смонтированном volume (/data).
+    Локально удобнее держать БД рядом с проектом.
+    """
+    on_railway = bool(
+        os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_SERVICE_ID")
+    )
+    return "/data/post_bot.sqlite" if on_railway else "./data/post_bot.sqlite"
 
 
 class Settings(BaseSettings):
@@ -34,8 +47,9 @@ class Settings(BaseSettings):
     model_stylist: str = "gpt-4o-mini"
     model_stt: str = "whisper-1"
 
-    # DB
-    db_path: str = "./data/post_bot.sqlite"
+    # DB — автоматически /data/... на Railway, ./data/... локально.
+    # Можно переопределить через env DB_PATH.
+    db_path: str = Field(default_factory=_default_db_path)
 
     # Pipeline
     max_rewrite_iterations: int = 2
