@@ -49,8 +49,18 @@ def brief_collecting_kb() -> InlineKeyboardMarkup:
     """Кнопки во время сбора брифа."""
     kb = InlineKeyboardBuilder()
     kb.row(
-        InlineKeyboardButton(text="✅ Готово, генерируй", callback_data="brief:generate"),
+        InlineKeyboardButton(text="✅ Готово, показать сводку", callback_data="brief:done"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="brief:cancel"),
+    )
+    return kb.as_markup()
+
+
+def brief_confirm_kb() -> InlineKeyboardMarkup:
+    """Подтверждение брифа перед запуском генерации."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="🚀 Генерировать", callback_data="brief:generate"),
+        InlineKeyboardButton(text="← Назад (дополнить)", callback_data="brief:back"),
     )
     return kb.as_markup()
 

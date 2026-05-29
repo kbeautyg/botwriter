@@ -1,6 +1,7 @@
 """aiogram handlers: вся логика бота."""
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 
 from aiogram import Bot, F, Router
@@ -15,6 +16,7 @@ from post_bot.bot.keyboards import (
     after_rating_kb,
     back_to_menu_kb,
     brief_collecting_kb,
+    brief_confirm_kb,
     confirm_delete_directive_kb,
     directive_genre_kb,
     directive_polarity_kb,
@@ -163,11 +165,13 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
     await msg.answer(M.CANCELLED)  # type: ignore[union-attr]
 
 
-# ----------------------------- /done -----------------------------
+# ----------------------------- /done — показ сводки перед генерацией -----------------------------
 
 @router.message(Command("done"))
-@router.callback_query(F.data == "brief:generate")
+@router.callback_query(F.data == "brief:done")
 async def cmd_done(event: Message | CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Шаг 1: дождаться всех расшифровок и показать пользователю сводку брифа.
+    Запуск Planner — только после нажатия «🚀 Генерировать» (callback brief:generate)."""
     current_state = await state.get_state()
     if current_state != BriefStates.waiting.state:
         msg = event if isinstance(event, Message) else event.message
@@ -178,22 +182,89 @@ async def cmd_done(event: Message | CallbackQuery, state: FSMContext, bot: Bot) 
 
     data = await state.get_data()
     brief_id: int = data["brief_id"]
+    expected_voices: int = int(data.get("voice_count", 0))
+
+    msg = event if isinstance(event, Message) else event.message
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
+    # Защита от race condition: ждём все Whisper-расшифровки до 90 сек.
+    waiting_msg = None
+    waited_s = 0.0
+    while waited_s < 90:
+        async with get_session() as s:
+            brief = await get_brief(s, brief_id)
+            if brief is None:
+                await state.clear()
+                await msg.answer(M.EMPTY_BRIEF)  # type: ignore[union-attr]
+                return
+            got_voices = len(brief.voice_transcripts or [])
+        if got_voices >= expected_voices:
+            break
+        if waiting_msg is None and expected_voices > 0:
+            waiting_msg = await msg.answer(  # type: ignore[union-attr]
+                f"⏳ Жду расшифровку голосовых ({got_voices}/{expected_voices})…"
+            )
+        await asyncio.sleep(2.0)
+        waited_s += 2.0
+    if waiting_msg is not None:
+        try:
+            await waiting_msg.delete()
+        except Exception:  # noqa: BLE001
+            pass
 
     async with get_session() as s:
         brief = await get_brief(s, brief_id)
         if brief is None or not brief.combined_input.strip():
             await state.clear()
-            msg = event if isinstance(event, Message) else event.message
-            if isinstance(event, CallbackQuery):
-                await event.answer()
             await msg.answer(M.EMPTY_BRIEF)  # type: ignore[union-attr]
             return
+        combined = brief.combined_input
+        text_chars = len(brief.raw_text or "")
+        voice_count = len(brief.voice_transcripts or [])
+
+    # Показываем сводку — пользователь подтверждает или возвращается дополнить.
+    await msg.answer(  # type: ignore[union-attr]
+        M.render_brief_summary(text_chars, voice_count, combined),
+        reply_markup=brief_confirm_kb(),
+    )
+
+
+# ----------------------------- запуск генерации (после подтверждения сводки) -----------------------------
+
+@router.callback_query(F.data == "brief:back")
+async def on_brief_back(cb: CallbackQuery, state: FSMContext) -> None:
+    """Вернуться в режим сбора брифа — добавить ещё тезисов/голосовых."""
+    await cb.answer("Продолжай добавлять")
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await cb.message.answer(
+            "Окей, продолжай добавлять тезисы или голосовые. Когда закончишь — «Готово».",
+            reply_markup=brief_collecting_kb(),
+        )
+
+
+@router.callback_query(F.data == "brief:generate")
+async def on_brief_generate(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Шаг 2: пользователь подтвердил сводку — запускаем Planner→Writer→Critic."""
+    current_state = await state.get_state()
+    if current_state != BriefStates.waiting.state:
+        await cb.answer()
+        return
+
+    data = await state.get_data()
+    brief_id: int = data["brief_id"]
+    msg = cb.message
+    await cb.answer()
+    if msg is None:
+        return
+    try:
+        await msg.edit_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001
+        pass
 
     await state.set_state(BriefStates.generating)
-    msg = event if isinstance(event, Message) else event.message
-    if isinstance(event, CallbackQuery):
-        await event.answer()
-    status_msg = await msg.answer(M.GENERATING)  # type: ignore[union-attr]
+    status_msg = await msg.answer(M.GENERATING)
 
     try:
         result = await generate_post(brief_id)
@@ -266,6 +337,36 @@ async def on_menu_history(cb: CallbackQuery) -> None:
 
 # ----------------------------- сбор брифа -----------------------------
 
+async def _update_progress(message: Message, state: FSMContext) -> None:
+    """Обновляет или создаёт одно прогресс-сообщение в чате брифинга.
+    Заменяет спам «🎙 Голосовое принято / ✍️ Расшифровка» — одно сообщение которое
+    меняется по мере поступления голосовых и завершения транскрипций."""
+    data = await state.get_data()
+    received = int(data.get("voice_count", 0))
+    brief_id = data.get("brief_id")
+    if brief_id is None:
+        return
+    async with get_session() as s:
+        brief = await get_brief(s, brief_id)
+        transcribed = len(brief.voice_transcripts or []) if brief else 0
+
+    text = M.render_voice_progress(received, transcribed)
+    msg_id = data.get("progress_msg_id")
+    if msg_id:
+        try:
+            await message.bot.edit_message_text(
+                text=text,
+                chat_id=message.chat.id,
+                message_id=msg_id,
+                reply_markup=brief_collecting_kb(),
+            )
+            return
+        except Exception:  # noqa: BLE001
+            pass  # сообщение могло быть удалено — создадим новое
+    sent = await message.answer(text, reply_markup=brief_collecting_kb())
+    await state.update_data(progress_msg_id=sent.message_id)
+
+
 @router.message(BriefStates.waiting, F.voice)
 @router.message(BriefStates.waiting, F.audio)
 async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
@@ -276,7 +377,10 @@ async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
     if voice is None:
         return
 
-    await message.answer(M.VOICE_RECEIVED)
+    # Инкремент счётчика и обновление прогресс-сообщения (без спама).
+    voice_count = int(data.get("voice_count", 0)) + 1
+    await state.update_data(voice_count=voice_count)
+    await _update_progress(message, state)
 
     try:
         buf = BytesIO()
@@ -286,11 +390,17 @@ async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
         text = await transcribe(audio_bytes, filename=filename)
     except Exception as e:
         logger.exception("Voice transcription failed")
+        data_now = await state.get_data()
+        await state.update_data(voice_count=max(0, int(data_now.get("voice_count", 0)) - 1))
         await message.answer(M.VOICE_FAILED.format(err=e))
+        await _update_progress(message, state)
         return
 
     if not text.strip():
+        data_now = await state.get_data()
+        await state.update_data(voice_count=max(0, int(data_now.get("voice_count", 0)) - 1))
         await message.answer(M.VOICE_FAILED.format(err="пустая расшифровка"))
+        await _update_progress(message, state)
         return
 
     async with get_session() as s:
@@ -299,11 +409,7 @@ async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
             return
         await append_voice(s, brief, text)
 
-    preview = (text[:120] + "…") if len(text) > 120 else text
-    await message.answer(
-        M.VOICE_TRANSCRIBED.format(preview=preview),
-        reply_markup=brief_collecting_kb(),
-    )
+    await _update_progress(message, state)
 
 
 @router.message(BriefStates.waiting, F.text)
@@ -320,10 +426,8 @@ async def on_text(message: Message, state: FSMContext) -> None:
         if brief is None:
             return
         await append_text(s, brief, txt)
-    await message.answer(
-        M.TEXT_RECEIVED.format(n_chars=len(txt)),
-        reply_markup=brief_collecting_kb(),
-    )
+    # Обновляем прогресс-сообщение (без спама на каждый текст).
+    await _update_progress(message, state)
 
 
 # ----------------------------- оценка поста -----------------------------

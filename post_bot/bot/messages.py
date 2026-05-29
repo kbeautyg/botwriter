@@ -37,6 +37,28 @@ VOICE_FAILED = "⚠️ Голосовое не расшифровалось: {er
 
 TEXT_RECEIVED = "📝 Принял ({n_chars} симв.)"
 
+
+def render_voice_progress(received: int, transcribed: int) -> str:
+    """Одно прогресс-сообщение вместо пачки уведомлений на каждое голосовое."""
+    if transcribed == received:
+        return f"✅ Все голосовые расшифрованы ({transcribed}). Жми «Готово»."
+    return f"🎙 Голосовых: {received} · расшифровано: {transcribed}/{received} ⏳"
+
+
+def render_brief_summary(text_chars: int, voice_count: int, preview: str) -> str:
+    """Сводка перед генерацией — показывает что бот собрал."""
+    parts = ["📋 *Бриф собран:*"]
+    if text_chars:
+        parts.append(f"• Текста: {text_chars} символов")
+    if voice_count:
+        parts.append(f"• Голосовых: {voice_count} (расшифровано)")
+    parts.append("")
+    parts.append("*Превью того что пойдёт в работу:*")
+    parts.append(preview if len(preview) <= 500 else preview[:500] + "…")
+    parts.append("")
+    parts.append("Если что-то упустил — нажми «← Назад» и добавь. Иначе — «🚀 Генерировать».")
+    return "\n".join(parts)
+
 CANCELLED = "Бриф отменён."
 
 EMPTY_BRIEF = "Бриф пустой — кинь хотя бы что-то текстом или голосовым."
